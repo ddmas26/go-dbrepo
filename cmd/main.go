@@ -30,9 +30,6 @@ func main() {
 	user_repo := database.NewGenericRepo[database.User](db, "users")
 	inventory_repo := database.NewGenericRepo[database.Inventory](db, "inventory")
 
-	fmt.Println("user_repo:", user_repo)
-	fmt.Println("inventory_repo:", inventory_repo)
-
 	newUser := database.User{
 		ID:        uuid.New(),
 		Name:      "John Doe test from code 2",

@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"reflect"
 	"strings"
 
@@ -54,35 +55,49 @@ func NewGenericRepo[T any](db *sql.DB, tableName string) *GenericRepo[T] {
 }
 
 func (r *GenericRepo[T]) Create(entity *T, db *sql.DB) (T, error) {
-	placeholders := make([]string, len(r.fields))
-	values := make([]interface{}, len(r.fields))
+	var activeFields []string
+	var placeholders []string
+	var values []interface{}
 
 	v := reflect.ValueOf(entity).Elem()
 
-	for i, _ := range r.fields {
+	placeholderIndex := 1
 
-		placeholders[i] = fmt.Sprintf("$%d", i+1)
+	for i, fieldName := range r.fields {
+		goFieldName := r.goFields[i]
+		fieldValue := v.FieldByName(goFieldName)
 
-		value := v.FieldByName(r.goFields[i]).Interface()
-		if value == nil {
-			values[i] = nil
-		} else {
-			values[i] = value
+		if !fieldValue.IsValid() {
+			continue
 		}
+
+		value := fieldValue.Interface()
+
+		if value == nil || value == "" {
+			continue
+		}
+
+		if fieldValue.Kind() == reflect.Ptr && fieldValue.IsNil() {
+			continue
+		}
+
+		activeFields = append(activeFields, fieldName)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", placeholderIndex))
+		values = append(values, value)
+		placeholderIndex++
 	}
 
-	fmt.Println("placeholders:", placeholders)
-	fmt.Println("values:", values)
-	fmt.Println("fields", r.fields)
-
+	log.Println("--------> placeholders:", placeholders)
+	log.Println("--------> values:", values)
+	log.Println("--------> fields", activeFields)
 	query := fmt.Sprintf(
 		"INSERT INTO %s (%s) VALUES (%s)",
 		r.table,
-		strings.Join(r.fields, ", "),
+		strings.Join(activeFields, ", "),
 		strings.Join(placeholders, ", "),
 	)
 
-	fmt.Println(query)
+	log.Println("------> query:\n", query)
 
 	_, err := db.Exec(query, values...)
 	if err != nil {

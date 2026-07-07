@@ -23,18 +23,8 @@ type Repo[T any] interface {
 	Update(entity *T, db *sql.DB) (T, error)
 	FindById(id uuid.UUID, db *sql.DB) (T, error)
 	FindAll(db *sql.DB) ([]T, error)
-	FindAllPaginated(db *sql.DB) ([]T, error)
+	FindAllPaginated(req PaginationRequest, db *sql.DB) ([]T, error)
 	Delete(id uuid.UUID, db *sql.DB) error
-}
-
-type PaginationRequest struct {
-	PageIndex      int
-	PageSize       int
-	Filter         string
-	SearchValue    string
-	SearchBy       []string
-	OrderBy        string
-	OrderDirection string
 }
 
 func NewGenericRepo[T any](db *sql.DB, tableName string) *GenericRepo[T] {
@@ -159,18 +149,7 @@ func (r *GenericRepo[T]) FindAll(db *sql.DB) ([]T, error) {
 
 }
 
-func (r *GenericRepo[T]) FindAllPaginated(req PaginationRequest, db *sql.DB) ([]T, error) {
-	// query := fmt.Sprintf("SELECT * FROM %s", r.table)
-	// if req.Filter != "" {
-	// 	buildedFiler, args := buildFilter(req.Filter, r.fields)
-	// 	query += buildedFiler
-	// 	fmt.Println(query)
-	// 	fmt.Println(args)
-	// }
-
-	// if req.SearchBy != ""{
-	// 	query +=
-	// }
+func (r *GenericRepo[T]) FindAllPaginated(req PaginationRequest, db *sql.DB) (PaginationResponse[T], error) {
 	var whereClauses []string
 	var args []interface{}
 
@@ -183,11 +162,22 @@ func (r *GenericRepo[T]) FindAllPaginated(req PaginationRequest, db *sql.DB) ([]
 	}
 
 	if req.SearchValue != "" && len(req.SearchBy) != 0 {
-		searchableColumns := req.SearchBy
-		searchClause, searchArg := buildSearch(req.SearchValue, searchableColumns, len(args)+1)
-		if searchClause != "" {
-			whereClauses = append(whereClauses, searchClause)
-			args = append(args, searchArg)
+		var validSearchBy []string
+		for _, sb := range req.SearchBy {
+			for _, field := range r.fields {
+				if strings.EqualFold(field, sb) {
+					validSearchBy = append(validSearchBy, field)
+					break
+				}
+			}
+		}
+
+		if len(validSearchBy) > 0 {
+			searchClause, searchArg := buildSearch(req.SearchValue, validSearchBy, len(args)+1)
+			if searchClause != "" {
+				whereClauses = append(whereClauses, searchClause)
+				args = append(args, searchArg)
+			}
 		}
 	}
 
@@ -196,9 +186,85 @@ func (r *GenericRepo[T]) FindAllPaginated(req PaginationRequest, db *sql.DB) ([]
 		query += " WHERE " + strings.Join(whereClauses, " AND ")
 	}
 
-	fmt.Println("Final Query:", query)
-	fmt.Println("Arguments:  ", args)
-	return nil, nil
+	orderBy := r.idField
+	if req.OrderBy != "" {
+		for _, field := range r.fields {
+			if strings.EqualFold(field, req.OrderBy) {
+				orderBy = field
+				break
+			}
+		}
+	}
+
+	countQuery := strings.Replace(query, "*", "COUNT(*)", 1)
+	countArgs := append([]interface{}{}, args...)
+
+	query += fmt.Sprintf(" ORDER BY %s", orderBy)
+
+	orderDir := "ASC"
+	switch strings.ToUpper(req.OrderDirection) {
+	case "ASC", "DESC":
+		orderDir = strings.ToUpper(req.OrderDirection)
+	}
+	query += " " + orderDir
+
+	if req.PageSize <= 0 {
+		req.PageSize = 10
+	}
+	if req.PageIndex <= 0 {
+		req.PageIndex = 1
+	}
+	offset := (req.PageIndex - 1) * req.PageSize
+
+	query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", len(args)+1, len(args)+2)
+
+	args = append(args, req.PageSize, offset)
+
+	log.Println("Final Query:", query)
+	log.Println("Count Query:", countQuery)
+	log.Println("Arguments:  ", args)
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return PaginationResponse[T]{}, fmt.Errorf("query failed: %w", err)
+	}
+	defer rows.Close()
+
+	var count int
+	countErr := db.QueryRow(countQuery, countArgs...).Scan(&count)
+
+	if countErr != nil {
+		return PaginationResponse[T]{}, fmt.Errorf("count query failed: %w", countErr)
+	}
+
+	log.Println("Counter now is: ", count)
+
+	var results []T
+	for rows.Next() {
+		var entity T
+		v := reflect.ValueOf(&entity).Elem()
+		values := make([]interface{}, len(r.fields))
+		for i := range r.fields {
+			values[i] = v.Field(i).Addr().Interface()
+		}
+		if err := rows.Scan(values...); err != nil {
+			return PaginationResponse[T]{}, fmt.Errorf("scan failed: %w", err)
+		}
+		results = append(results, entity)
+	}
+	if err = rows.Err(); err != nil {
+		return PaginationResponse[T]{}, fmt.Errorf("rows iteration failed: %w", err)
+	}
+
+	totalPages := (count + req.PageSize - 1) / req.PageSize
+
+	return PaginationResponse[T]{
+		Data:       results,
+		TotalCount: count,
+		PageIndex:  req.PageIndex,
+		PageSize:   req.PageSize,
+		TotalPages: totalPages,
+	}, nil
 }
 
 func buildFilter(filter string, fields []string, startingPlaceholderIndex int) ([]string, []interface{}) {
@@ -248,7 +314,7 @@ func buildFilter(filter string, fields []string, startingPlaceholderIndex int) (
 			}
 
 			for _, dbField := range fields {
-				if strings.ToLower(dbField) == strings.ToLower(filterKey) {
+				if strings.EqualFold(dbField, filterKey) {
 					orClauses = append(orClauses, fmt.Sprintf("%s %s $%d", dbField, operator, placeholderIndex))
 					args = append(args, cleanVal)
 					placeholderIndex++

@@ -50,10 +50,17 @@ func main() {
 	// fmt.Println(inventoryList)
 
 	req := database.PaginationRequest{
-		Filter:      "name: Widget, price: < 5 | price: > 100",
-		SearchBy:    []string{"name"},
-		SearchValue: "inventory",
+		// Filter: "quantity: 10",
+		SearchBy:       []string{"name"},
+		SearchValue:    "wireless",
+		OrderBy:        "price",
+		OrderDirection: "DESC",
+		PageIndex:      1,
+		PageSize:       10,
 	}
 	inventoryList2, err := inventory_repo.FindAllPaginated(req, db)
+	if err != nil {
+		panic(err)
+	}
 	fmt.Println(inventoryList2)
 }

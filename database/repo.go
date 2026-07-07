@@ -88,17 +88,12 @@ func (r *GenericRepo[T]) Create(entity *T, db *sql.DB) (T, error) {
 		placeholderIndex++
 	}
 
-	log.Println("--------> placeholders:", placeholders)
-	log.Println("--------> values:", values)
-	log.Println("--------> fields", activeFields)
 	query := fmt.Sprintf(
 		"INSERT INTO %s (%s) VALUES (%s)",
 		r.table,
 		strings.Join(activeFields, ", "),
 		strings.Join(placeholders, ", "),
 	)
-
-	log.Println("------> query:\n", query)
 
 	_, err := db.Exec(query, values...)
 	if err != nil {
@@ -265,6 +260,123 @@ func (r *GenericRepo[T]) FindAllPaginated(req PaginationRequest, db *sql.DB) (Pa
 		PageSize:   req.PageSize,
 		TotalPages: totalPages,
 	}, nil
+}
+
+func (r *GenericRepo[T]) FindById(id uuid.UUID, db *sql.DB) (T, error) {
+	query := fmt.Sprintf("SELECT * FROM %s WHERE %s = $1", r.table, r.idField)
+
+	log.Println("query: ", query)
+
+	var entity T
+	v := reflect.ValueOf(&entity).Elem()
+
+	values := make([]interface{}, len(r.fields))
+	for i := range r.fields {
+		values[i] = v.Field(i).Addr().Interface()
+	}
+
+	row := db.QueryRow(query, id)
+	err := row.Scan(values...)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return entity, fmt.Errorf("%s not found: %w", r.table, err)
+		}
+		return entity, fmt.Errorf("scan failed: %w", err)
+	}
+
+	return entity, nil
+}
+
+func (r *GenericRepo[T]) Update(entity *T, db *sql.DB) (T, error) {
+	var setClauses []string
+	var values []interface{}
+
+	v := reflect.ValueOf(entity).Elem()
+	placeholderIndex := 1
+	var idValue interface{}
+
+	for i, fieldName := range r.fields {
+		goFieldName := r.goFields[i]
+		fieldValue := v.FieldByName(goFieldName)
+
+		if !fieldValue.IsValid() {
+			continue
+		}
+
+		if r.idField == fieldName {
+			idValue = fieldValue.Interface()
+			continue
+		}
+
+		value := fieldValue.Interface()
+
+		if value == nil {
+			continue
+		}
+
+		if fieldValue.Kind() == reflect.Ptr && fieldValue.IsNil() {
+			continue
+		}
+
+		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", fieldName, placeholderIndex))
+		values = append(values, value)
+		placeholderIndex++
+	}
+
+	if len(setClauses) == 0 {
+		return *entity, fmt.Errorf("no fields to update")
+	}
+
+	values = append(values, idValue)
+
+	query := fmt.Sprintf(
+		"UPDATE %s SET %s WHERE %s = $%d",
+		r.table,
+		strings.Join(setClauses, ", "),
+		r.idField,
+		placeholderIndex,
+	)
+
+	log.Println("------> query:\n", query)
+	log.Println("------> values:", values)
+
+	result, err := db.Exec(query, values...)
+	if err != nil {
+		return *entity, fmt.Errorf("update failed: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return *entity, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return *entity, fmt.Errorf("%s not found", r.table)
+	}
+
+	return *entity, nil
+}
+
+func (r *GenericRepo[T]) Delete(id uuid.UUID, db *sql.DB) error {
+	query := fmt.Sprintf("DELETE FROM %s WHERE %s = $1", r.table, r.idField)
+
+	log.Println("query: ", query)
+
+	result, err := db.Exec(query, id)
+	if err != nil {
+		return fmt.Errorf("delete failed: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("%s not found", r.table)
+	}
+
+	return nil
 }
 
 func buildFilter(filter string, fields []string, startingPlaceholderIndex int) ([]string, []interface{}) {

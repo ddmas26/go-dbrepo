@@ -7,10 +7,11 @@ A generic, type-safe CRUD and paginated query library for PostgreSQL, built with
 - **Generic Repository** — type-safe CRUD operations for any struct using Go 1.26 generics
 - **Safe Paginated Queries** — SQL injection protected via parameterized queries and whitelist validation
 - **Dynamic Filtering** — filter with `AND`/`OR` combinations, comparison operators (`=`, `>`, `<`, `>=`, `<=`)
-- **Full-Text Search** — `ILIKE` search across specified columns
+- **Full-Text Search** — `ILIKE` search across specified columns with whitelist-validated column names
 - **Ordered Pagination** — safe `ORDER BY` with whitelist-validated columns and directions
 - **Count Query** — returns total matching rows for frontend pagination controls
-- **Auto-Migration** — runs SQL migration files in order from `migrate/migrations/`
+- **Auto-Migration** — runs SQL migration files in order from `migrate/migrations/` with automatic rollback
+- **Integration Tests** — 17 tests covering CRUD, pagination, edge cases, and SQL injection scenarios
 
 ## Project Structure
 
@@ -31,6 +32,8 @@ A generic, type-safe CRUD and paginated query library for PostgreSQL, built with
 │   └── run/
 │       └── run.go                 # Migration runner
 ├── go.mod
+├── tests/
+│   └── repo_test.go              # Integration tests (17 test functions)
 └── README.md
 ```
 
@@ -55,11 +58,39 @@ DBNAME=inventory_db
 
 ### Run Migrations
 
+The migration runner:
+
+1. **Creates the database if it doesn't exist** — connects to the default `postgres` database and runs `CREATE DATABASE` automatically
+2. **Connects to your target database**
+3. **Executes `up.sql`** files in each numbered folder sequentially
+4. **Rolls back on failure** — if any migration fails, the corresponding `down.sql` is executed
+
 ```bash
 go run ./migrate/run/
 ```
 
-This executes `up.sql` files in each numbered folder sequentially, with automatic rollback on failure.
+#### Migration Folders
+
+Each folder under `migrate/migrations/` represents one migration step:
+
+```
+migrate/migrations/
+├── 0_01072026/           # Migration 0 — initial tables
+│   ├── up.sql            # CREATE TABLE users
+│   └── down.sql          # DROP TABLE users
+├── 1_04072026/           # Migration 1
+│   ├── up.sql            # CREATE TABLE inventory
+│   └── down.sql
+├── 2_05072026/           # Migration 2
+│   ├── up.sql            # ALTER TABLE users ADD COLUMN
+│   └── down.sql
+└── 3_06072026/           # Placeholder (empty)
+```
+
+**To add a new migration:**
+1. Create a folder like `4_08072026/`
+2. Add `up.sql` with your changes
+3. Add `down.sql` with the reverse (for rollback)
 
 ### Run the App
 
@@ -102,7 +133,10 @@ all, err := repo.FindAll(db)
 // Find By ID
 item, err := repo.FindById(id, db)
 
-// Delete
+// Update — returns error if ID doesn't exist
+updated, err := repo.Update(&entity, db)
+
+// Delete — returns error if ID doesn't exist
 err := repo.Delete(id, db)
 ```
 
@@ -143,8 +177,40 @@ field: val1 , field2: val2       → field = val1 AND field2 = val2  [AND groups
 
 All field names are validated against the model's `db` tags — SQL injection via column names is prevented.
 
+## Response Structure
+
+`FindAllPaginated` returns a `PaginationResponse[T]`:
+
+```go
+type PaginationResponse[T any] struct {
+    Data       []T   // items for the current page
+    TotalCount int   // total matching rows (across all pages)
+    PageIndex  int   // current page number
+    PageSize   int   // items per page
+    TotalPages int   // total number of pages
+}
+```
+
+## Running Tests
+
+Tests are in the `tests/` folder and require a running PostgreSQL instance.
+
+```bash
+# Set environment variables (or use .env file in project root)
+export HOST=localhost PORT=5432 DB_USER=postgres PASSWORD=pass DBNAME=test_db
+
+# Run all tests
+go test ./tests/ -v -count=1
+
+# Run a specific test
+go test ./tests/ -v -run TestFindAllPaginated_WithFilter -count=1
+```
+
+Tests will **skip gracefully** if no database is available.
+
 ## Security
 
 - **Parameterized queries** — all values are passed via `$N` placeholders
 - **Whitelist validation** — column names for `OrderBy`, `Filter`, and `SearchBy` are validated against known struct fields
+- **`RowsAffected` checks** — `Update` and `Delete` verify the operation actually touched a row
 - **No raw string interpolation** — user input never appears directly in SQL

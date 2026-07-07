@@ -71,12 +71,51 @@ func checkfolders() {
 	}
 }
 
+func createDatabaseIfNotExists(host, port, user, password, dbname string) {
+	// Connect to the default 'postgres' database to create the target database
+	connString := fmt.Sprintf(
+		"postgres://%s:%s@%s:%s/postgres?sslmode=disable",
+		user, password, host, port,
+	)
+
+	tmpDB, err := sql.Open("postgres", connString)
+	if err != nil {
+		log.Printf("---> Warning: could not connect to create database: %v", err)
+		return
+	}
+	defer tmpDB.Close()
+
+	// Check if database already exists
+	var exists bool
+	err = tmpDB.QueryRow("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", dbname).Scan(&exists)
+	if err != nil {
+		log.Printf("---> Warning: could not check if database exists: %v", err)
+		return
+	}
+
+	if exists {
+		log.Printf("---> Database '%s' already exists", dbname)
+		return
+	}
+
+	// CREATE DATABASE cannot run inside a transaction
+	_, err = tmpDB.Exec("CREATE DATABASE " + dbname)
+	if err != nil {
+		log.Printf("---> Warning: could not create database '%s': %v", dbname, err)
+		return
+	}
+
+	log.Printf("---> Created database '%s'", dbname)
+}
+
 func main() {
 	HOST := os.Getenv("HOST")
 	PORT := os.Getenv("PORT")
 	USER := os.Getenv("DB_USER")
 	PASSWORD := os.Getenv("PASSWORD")
 	DBNAME := os.Getenv("DBNAME")
+
+	createDatabaseIfNotExists(HOST, PORT, USER, PASSWORD, DBNAME)
 
 	connString := fmt.Sprintf(
 		"postgres://%s:%s@%s:%s/%s?sslmode=disable",

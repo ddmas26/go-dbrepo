@@ -42,11 +42,32 @@ A generic, type-safe CRUD and paginated query library for PostgreSQL, built with
 ### Prerequisites
 
 - Go 1.26+
-- PostgreSQL
+- PostgreSQL (or Docker — recommended for local development)
+
+### Quick Start (Docker — Recommended)
+
+Run PostgreSQL in a container:
+
+```bash
+docker run -d \
+  --name inventory-db \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=your_password \
+  -e POSTGRES_DB=inventory_db \
+  -p 5432:5432 \
+  postgres:16
+```
+
+To stop and remove later:
+
+```bash
+docker stop inventory-db
+docker rm inventory-db
+```
 
 ### Environment Variables
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root (matching the Docker setup above):
 
 ```env
 HOST=localhost
@@ -54,6 +75,29 @@ PORT=5432
 DB_USER=postgres
 PASSWORD=your_password
 DBNAME=inventory_db
+```
+
+### Clone and Run (Full Steps)
+
+```bash
+# 1. Clone the repository
+git clone <repo-url>
+cd go_inventory
+
+# 2. Start PostgreSQL (Docker)
+docker run -d \
+  --name inventory-db \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=your_password \
+  -e POSTGRES_DB=inventory_db \
+  -p 5432:5432 \
+  postgres:16
+
+# 3. Run migrations (creates tables)
+go run ./migrate/run/
+
+# 4. Run the app
+go run ./cmd/
 ```
 
 ### Run Migrations

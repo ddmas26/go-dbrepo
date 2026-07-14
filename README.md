@@ -1,3 +1,5 @@
+# inventory
+
 # go-dbrepo
 
 A generic, type-safe CRUD and paginated query library for PostgreSQL, built with Go generics and reflection.
